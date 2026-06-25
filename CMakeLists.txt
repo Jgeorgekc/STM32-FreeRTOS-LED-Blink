@@ -36,7 +36,7 @@ set (MFLOAT_ABI_MIX                   "-mfloat-abi=softfp")
 #######################################################################
 
 ###################### VARIABLES ######################################
-set (PROJECT_NAME             "FreeRTOS_led")
+set (PROJECT_NAME             "FreeRTOS_Semaphore")
 set (PROJECT_TYPE             "exe")
 set (LINKER_SCRIPT            "../STM32F407VGTX_FLASH.ld")
 set (MCPU                     "-mcpu=cortex-m4")

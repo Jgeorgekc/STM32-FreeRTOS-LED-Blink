@@ -1,5 +1,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 
 #define RCC_AHB1ENR   (*(volatile uint32_t*)0x40023830)
 
@@ -12,7 +13,23 @@
 
 #define SCB_CPACR     (*(volatile uint32_t*)0xE000ED88)
 
+#define RCC_APB2ENR   (*(volatile uint32_t*)0x40023844)
+
+#define SYSCFG_EXTICR1 (*(volatile uint32_t*)0x40013808)
+
+#define EXTI_IMR      (*(volatile uint32_t*)0x40013C00)
+#define EXTI_RTSR     (*(volatile uint32_t*)0x40013C08)
+#define EXTI_PR       (*(volatile uint32_t*)0x40013C14)
+
+#define NVIC_ISER0    (*(volatile uint32_t*)0xE000E100)
+
+#define NVIC_IPR1 (*(volatile uint32_t*)0xE000E404)
+
+
+
 TaskHandle_t LedTaskHandle = NULL;
+SemaphoreHandle_t ButtonSemaphore = NULL;
+volatile uint8_t buttonBusy = 0;
 
 /*---------------- LED Task ----------------*/
 void LedTask(void *pvParameters)
@@ -21,7 +38,7 @@ void LedTask(void *pvParameters)
 
     while (1)
     {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    	xSemaphoreTake(ButtonSemaphore, portMAX_DELAY);
 
         GPIOD_ODR |= (1 << 12);
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -36,8 +53,35 @@ void LedTask(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(500));
 
         GPIOD_ODR &= ~((1<<12)|(1<<13)|(1<<14)|(1<<15));
+        buttonBusy = 0;
+
+
     }
 }
+void EXTI0_IRQHandler(void)
+{
+
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+
+    if (EXTI_PR & (1 << 0))
+    {
+        EXTI_PR = (1 << 0);
+
+
+        if(buttonBusy == 0)
+               {
+                   buttonBusy = 1;
+
+                   xSemaphoreGiveFromISR(ButtonSemaphore,
+                                         &xHigherPriorityTaskWoken);
+               }
+
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
 
 /*---------------- Button Task ----------------*/
 void ButtonTask(void *pvParameters)
@@ -52,7 +96,7 @@ void ButtonTask(void *pvParameters)
 
             if (GPIOA_IDR & (1 << 0))
             {
-                xTaskNotifyGive(LedTaskHandle);
+            	xSemaphoreGive(ButtonSemaphore);
 
                 while (GPIOA_IDR & (1 << 0));
 
@@ -63,6 +107,7 @@ void ButtonTask(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
 
 int main(void)
 {
@@ -87,6 +132,10 @@ int main(void)
         GPIOD_MODER |=  (1U << (i*2));
     }
 
+    ButtonSemaphore = xSemaphoreCreateBinary();
+
+    configASSERT(ButtonSemaphore != NULL);
+
     xTaskCreate(
         LedTask,
         "LED",
@@ -95,6 +144,7 @@ int main(void)
         2,
         &LedTaskHandle);
 
+ #if 0
     xTaskCreate(
         ButtonTask,
         "BUTTON",
@@ -102,6 +152,27 @@ int main(void)
         NULL,
         3,
         NULL);
+ #endif
+    /* Enable SYSCFG clock */
+    RCC_APB2ENR |= (1 << 14);
+
+    /* EXTI0 source = PA0 */
+    SYSCFG_EXTICR1 &= ~(0xF << 0);
+
+    /* Unmask EXTI0 */
+    EXTI_IMR |= (1 << 0);
+
+    /* Rising edge trigger */
+    EXTI_RTSR |= (1 << 0);
+
+    /* EXTI0 interrupt priority = 5 */
+    NVIC_IPR1 &= ~(0xFF << 16);   // Clear IRQ6 priority field
+    NVIC_IPR1 |=  (5 << 20);      // Set priority to 5
+
+   /* Enable EXTI0 interrupt in NVIC */
+    NVIC_ISER0 |= (1 << 6);
+
+
 
     vTaskStartScheduler();
 
